@@ -1,0 +1,136 @@
+
+// PDM = Pollution Density Map
+// author : Tanya Suri
+// simple script to add Aerosol, NO2, SO2 by sentinel - 5P to give th ecombine density
+// in Mol/meter
+
+
+
+var adani_geo = geometry
+
+
+//////////////////////AEROSOL////////////////////////////////////////////
+
+var roi = adani_geo
+
+var collection_aero = ee.ImageCollection('COPERNICUS/S5P/NRTI/L3_AER_AI')
+  .select('absorbing_aerosol_index')
+  .filterDate('2023-04-01', '2023-05-20')
+  .filterBounds(roi);
+
+var band_viz = {
+  min: -1,
+  max: 2.0,
+  palette: ['black', 'blue', 'purple', 'cyan', 'green', 'yellow', 'red']
+};
+
+//Map.addLayer(collection_aero.median().clip(roi), band_viz, 'S5P Aerosol');
+
+var aero = collection_aero.median().clip(roi);
+
+
+///////////////////////////NO2///////////////////////////////////////////
+
+var collection_no2 = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_NO2')
+  .select('tropospheric_NO2_column_number_density')
+  .filterDate('2023-04-01', '2023-05-20')
+  .filterBounds(roi);
+
+var band_viz = {
+  min: 0,
+  max: 0.0002,
+  palette: ['black', 'blue', 'purple', 'cyan', 'green', 'yellow', 'red']
+};
+
+//Map.addLayer(collection_no2.median().clip(roi), band_viz, 'S5P N02');
+var no2 = collection_no2.median().clip(roi);
+
+/////////////////////////SO2////////////////////////////////////////////
+
+var collection_so2 = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_SO2')
+  .select('SO2_column_number_density')
+  .filterDate('2023-04-01', '2023-05-20')
+  .filterBounds(roi);
+
+var band_viz = {
+  min: 0.0,
+  max: 0.0005,
+  palette: ['black', 'blue', 'purple', 'cyan', 'green', 'yellow', 'red']
+};
+
+//Map.addLayer(collection_so2.median().clip(roi), band_viz, 'S5P SO2');
+
+var so2 = collection_so2.median().clip(roi);
+
+var final = no2.add(so2);
+Map.addLayer(final.clip(geometry18), band_viz, 'pDM');
+var minMaxValues_final = final.reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 150,
+                                maxPixels: 10e9
+                                })
+print(minMaxValues_final);
+
+var max = ee.Number(minMaxValues_final.get("tropospheric_NO2_column_number_density_max"));
+var min = ee.Number(minMaxValues_final.get("tropospheric_NO2_column_number_density_min"));
+
+var viz = {
+  min: 0,
+  max: max.getInfo(),
+  palette : ['green','lightgreen','orange','red']
+};
+Map.addLayer(final.clip(roi), viz, 'pDM');
+var palette = ['green','lightgreen','orange','red']
+Map.addLayer(final, viz, 'PDM');
+Export.image.toDrive({
+  image: final.visualize(viz).clip(roi),
+  description: "PDM_adani",
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+var nSteps = 10
+// Creates a color bar thumbnail image for use in legend from the given color palette
+function makeColorBarParams(palette) {
+  return {
+    bbox: [0, 0, nSteps, 0.1],
+    dimensions: '300x10',
+    format: 'png',
+    min: 0,
+    max: nSteps,
+    palette: palette,
+  };
+}
+
+// Create the colour bar for the legend
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0).int(),
+  params: makeColorBarParams(viz.palette),
+  style: {stretch: 'vertical', margin: '0px 8px', maxHeight: '24px'},
+});
+
+
+
+// Create a panel with three numbers for the legend
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(Number((viz.min).toFixed(5)), {margin: '4px 8px'}),
+    ui.Label(
+        (Number((viz.max-viz.min) / 2+viz.min).toFixed(5)),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+    ui.Label(Number((viz.max).toFixed(5)), {margin: '4px 8px'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+// Legend title
+var legendTitle = ui.Label({
+  value: 'Pollution Density Map',
+  style: {fontWeight: 'bold'}
+});
+
+// Add the legendPanel to the map
+var legendPanel = ui.Panel([legendTitle, colorBar, legendLabels]);
+Map.add(legendPanel);
+

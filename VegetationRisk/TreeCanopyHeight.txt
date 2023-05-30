@@ -1,0 +1,543 @@
+
+////////////////////define training and etsting geometry as well as the date ranges//////////////
+
+var table = ee.FeatureCollection(table);
+
+Map.addLayer(table, {}, 'Table Points');
+
+
+var start_date = '2022-02-01'
+var end_date = '2022-03-30'
+
+
+var test_start_date = '2023-02-01'
+var test_end_date = '2023-03-30'
+
+var month = 'april_test'
+
+
+var boundary = ee.FeatureCollection(geometry2);
+var test_boundary = ee.FeatureCollection(geom);
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+// Load Sentinel-2 spectral reflectance data.
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR');
+
+// Create a function to mask clouds using the Sentinel-2 QA band.
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = ee.Number(2).pow(10).int();
+  var cirrusBitMask = ee.Number(2).pow(11).int();
+
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
+             qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  // Return the masked and scaled data.
+  return image.updateMask(mask).divide(10000);
+}
+
+
+var composite_test = s2.filterDate(test_start_date,test_end_date)
+                  // Pre-filter to get less cloudy granules.
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+                  .map(maskS2clouds);
+                
+var S2_composite_test = composite_test.median().clip(test_boundary).reproject({crs: 'EPSG:32735', scale: 30});
+// Filter clouds from Sentinel-2 for a given period.
+print(S2_composite_test)
+
+var composite = s2.filterDate(start_date, end_date)
+                  // Pre-filter to get less cloudy granules.
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+                  .map(maskS2clouds);
+
+
+// Reproject to WGS 84 UTM zone 35s                  
+var S2_composite = composite.median().clip(boundary).reproject({crs: 'EPSG:32735', scale: 30});
+
+// Check projection information                 
+print('Projection, crs, and crs_transform:', S2_composite.projection());
+
+// Display a composite S2 imagery
+Map.addLayer(S2_composite.clip(boundary), {bands: ['B11', 'B8', 'B3'], min: 0, max: 0.3});
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+// Load SRTM for training
+var SRTM = ee.Image("USGS/SRTMGL1_003");
+// Clip Elevation
+var elevation = SRTM.clip(boundary);
+
+// Reproject 'elevation' to WGS 84 UTM zone 35s                
+var elevation = elevation.reproject({crs: 'EPSG:32735',scale: 30}); 
+  
+// Check projection information
+print('Projection, crs, and crs_transform:', elevation.projection()); 
+
+// Derive slope from the SRTM
+var slope = ee.Terrain.slope(SRTM).clip(boundary);
+
+// Reproject 'slope' to WGS 84 UTM zone 35s                
+var slope = slope.reproject({crs: 'EPSG:32735',scale: 30}); 
+  
+// Check projection information
+print('Projection, crs, and crs_transform:', slope.projection()); 
+
+
+//////////////////test/////////////////////////////////////////////
+
+var SRTM = ee.Image("USGS/SRTMGL1_003");
+// Clip Elevation
+var elevation_test = SRTM.clip(test_boundary);
+
+// Reproject 'elevation' to WGS 84 UTM zone 35s                
+var elevation_test = elevation_test.reproject({crs: 'EPSG:32735',scale: 30}); 
+  
+// Check projection information
+print('Projection, crs, and crs_transform:', elevation_test.projection()); 
+
+// Derive slope from the SRTM
+var slope_test = ee.Terrain.slope(SRTM).clip(test_boundary);
+
+// Reproject 'slope' to WGS 84 UTM zone 35s                
+var slope_test = slope_test.reproject({crs: 'EPSG:32735',scale: 30}); 
+  
+// Check projection information
+print('Projection, crs, and crs_transform:', slope_test.projection());
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Load ESA World Cover data
+var dataset = ee.ImageCollection("ESA/WorldCover/v100").first();
+
+// Clip the land cover to the boundary
+var ESA_LC_2020 = dataset.clip(boundary);
+
+// Extract forest areas from the land cover
+var forest_mask = ESA_LC_2020.updateMask(
+  ESA_LC_2020.eq(10) // Only keep pixels where class equals 2
+);
+
+// Display forests only
+var visualization = {bands: ['Map'],};
+
+Map.addLayer(forest_mask, visualization, "Trees");
+
+///////////////////////////////////////test ESA////////////////////////////////////////
+
+var dataset = ee.ImageCollection("ESA/WorldCover/v100").first();
+
+// Clip the land cover to the boundary
+var ESA_LC_2020_test = dataset.clip(test_boundary);
+
+// Extract forest areas from the land cover
+var forest_mask_test = ESA_LC_2020_test.updateMask(
+  ESA_LC_2020_test.eq(10) // Only keep pixels where class equals 2
+);
+
+// Display forests only
+var visualization_test = {bands: ['Map'],};
+
+Map.addLayer(forest_mask_test, visualization_test, "Trees");
+
+//////////////////////////////////////////////////////////////////////////////////
+
+ 
+/////////////////////////////////////////////////////////////////////////////////////////////
+// Merge the predictor variables
+
+var mergedCollection_test = S2_composite_test
+  .addBands(elevation_test
+  .addBands(slope_test
+  .addBands(forest_mask_test)));
+
+// Clip to the output image to Harare study area boundary.
+var clippedmergedCollection_test = mergedCollection_test.clipToCollection(test_boundary);
+print('clippedmergedCollection Test: ', clippedmergedCollection_test);
+
+// Bands to include in the classification
+var bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B11', 'B12','Map','elevation','slope'];
+
+
+var mergedCollection = S2_composite
+
+  .addBands(elevation
+  .addBands(slope
+  .addBands(forest_mask)));
+
+// Clip to the output image to Harare study area boundary.
+var clippedmergedCollection = mergedCollection.clipToCollection(boundary);
+print('clippedmergedCollection: ', clippedmergedCollection);
+
+// Bands to include in the classification
+var bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B11', 'B12','Map','elevation','slope'];
+
+////////////////////////////////////////////////////////////////////////////
+
+// Define a mask
+var qualityMask = function(im) {
+  return im.updateMask(im.select('quality_flag').eq(1))
+      .updateMask(im.select('degrade_flag').eq(0));
+};
+
+// Import the "EDI02_A_002_MONTHLY: dataset
+var dataset =  ee.ImageCollection('LARSE/GEDI/GEDI02_A_002_MONTHLY')
+                  .map(qualityMask)
+                  .filterDate(start_date, end_date)
+                  .select("rh98").filterBounds(boundary);
+
+// Create a pallete to visualize the dataset
+var gediVis = {
+  min: 1,
+  max: 60,
+  palette: 'darkred,red,orange,green,darkgreen',
+};
+
+
+Map.addLayer(dataset, gediVis, "rh98");
+
+// Define projection and scale parameters
+var projection = dataset.first().projection().aside(print);
+var scale = projection.nominalScale().aside(print);
+
+var mosaic = dataset.mosaic().setDefaultProjection({crs:projection, scale:scale});
+
+var points = mosaic.sample({
+  region: boundary,
+  scale: scale,
+  numPixels: 20000, 
+  projection: projection,
+  geometries: true});
+
+print(points.size());
+print(points.limit(10));
+
+Map.addLayer(points);
+
+var datawithColumn = points.randomColumn('random', 27);
+
+
+var split = 0.95; 
+var trainingData = datawithColumn.filter(ee.Filter.lt('random', split));
+
+print('training data', trainingData);
+
+var validationData = datawithColumn.filter(ee.Filter.gte('random', split));
+
+// Print the testing (validation) data
+print('validation data', validationData);
+
+//////////////////////////////////////////////////////////////////////
+// Perform regression modeling using RF classifier
+
+// Collect training data
+var training = clippedmergedCollection.select(bands).sampleRegions({
+  collection: trainingData,
+  properties: ["rh98"],
+  scale: 30 // Need to change the scale of training data to avoid the 'out of memory' problem
+  });
+
+print('before classifier : ')
+print(clippedmergedCollection.select(bands))
+
+var classifier = ee.Classifier.smileCart(10)
+  .setOutputMode('REGRESSION')
+  .train({
+    features: training, 
+    classProperty: "rh98",
+    inputProperties: bands
+    });
+
+//Run the classification and clip it to the boundary
+var regression = clippedmergedCollection.select(bands).classify(classifier, 'predicted').clip(boundary);
+print("The regeression output is : ",regression)
+var regression_test = clippedmergedCollection_test.select(bands).classify(classifier, 'predicted').clip(test_boundary);
+
+
+
+// // Load and define a continuous palette
+var palettes = require('users/gena/packages:palettes');
+
+// Choose and define a palette
+var palette =  ['blue','lightblue','yellow','lightgreen','green'] 
+
+
+var regressionMin_test = (regression_test.reduceRegion({
+    reducer: ee.Reducer.min(),
+    scale: 30, 
+    crs: 'EPSG:32735',
+    geometry: test_boundary,
+    bestEffort: true,
+    tileScale: 10
+  }));
+var regressionMax_test = (regression_test.reduceRegion({
+    reducer: ee.Reducer.max(),
+    scale: 30, 
+    crs: 'EPSG:32735',
+    geometry: test_boundary,
+    bestEffort: true,
+    tileScale: 10
+  }));
+//print(regressionMin)
+// Add to map
+var viz_test = {palette: palette, min: regressionMin_test.getNumber('predicted').getInfo(), max: regressionMax_test.getNumber('predicted').getInfo()};
+Map.addLayer(regression_test, viz_test, 'Regression Test');
+//palettes.colorbrewer.YlGn[5];
+
+// Display the input imagery and the regression classification.
+  // get dictionaries of min & max predicted value
+var regressionMin = (regression.reduceRegion({
+    reducer: ee.Reducer.min(),
+    scale: 30, 
+    crs: 'EPSG:32735',
+    geometry: boundary,
+    bestEffort: true,
+    tileScale: 10
+  }));
+var regressionMax = (regression.reduceRegion({
+    reducer: ee.Reducer.max(),
+    scale: 30, 
+    crs: 'EPSG:32735',
+    geometry: boundary,
+    bestEffort: true,
+    tileScale: 10
+  }));
+//print(regressionMin)
+// Add to map
+var viz = {palette: palette, min: regressionMin.getNumber('predicted').getInfo(), max: regressionMax.getNumber('predicted').getInfo()};
+Map.addLayer(regression, viz, 'Regression');
+print('regressionMin_test')
+print(regressionMin_test)
+print(regressionMax_test)
+
+var reg_mean = (regression_test.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    scale: 30, 
+    crs: 'EPSG:32735',
+    geometry: test_boundary,
+    bestEffort: true,
+    tileScale: 10
+  }));
+print(reg_mean)
+/////////////////////////hotposts///////////////////////////////////////////////////
+
+var hotspots_2023= regression_test
+  .where(regression_test.lte(12), 0)
+  .where(regression_test.gt(12).and(regression_test.lte(16)), 1)
+  .where(regression_test.gt(16), 2);
+var regression_test_corridor = regression_test.clip(test_boundary)
+
+
+var hotspot_viz = {min:0, max:2, palette: ['green','yellow','red']}
+Map.addLayer(hotspots_2023.clip(test_boundary),{min:0, max:2, palette: ['green','yellow','red']}, 'Hotspots',false);
+// var palettes = require('users/gena/packages:palettes');
+Export.image.toDrive({
+  image: hotspots_2023.visualize(hotspot_viz).clip(test_boundary),
+  description: "hotspot indiGrid 2",
+  crs : 'EPSG:4326',
+  region: test_boundary,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+
+
+Export.image.toDrive({
+  image: forest_mask_test.visualize(visualization_test).clip(test_boundary),
+  description: "cover map",
+  crs : 'EPSG:4326',
+  region: test_boundary,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+
+// // Choose and define a palette
+// var palette =  ['blue','lightblue','yellow','lightgreen','green'] 
+
+/////////////////////////////////////////////////////////////////////////////////////
+// Create the panel for the legend items.
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Create and add the legend title.
+var legendTitle = ui.Label({
+  value: 'TC Height',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+  }
+});
+
+legend.add(legendTitle);
+
+// create the legend image
+var lon = ee.Image.pixelLonLat().select('latitude');
+var gradient = lon.multiply((viz_test.max-viz_test.min)/100.0).add(viz_test.min);
+var legendImage = gradient.visualize(viz_test);
+ 
+// create text on top of legend
+var panel = ui.Panel({
+widgets: [
+ui.Label(viz_test['max'])
+],
+});
+ 
+legend.add(panel);
+ 
+// create thumbnail from the image
+var thumbnail = ui.Thumbnail({
+image: legendImage,
+params: {bbox:'0,0,10,100', dimensions:'10x200'},
+style: {padding: '1px', position: 'bottom-center'}
+});
+ 
+// add the thumbnail to the legend
+legend.add(thumbnail);
+ 
+// create text on top of legend
+var panel = ui.Panel({
+widgets: [
+ui.Label(viz_test['min'])
+],
+});
+legend.add(panel);
+Map.add(legend);
+
+// Zoom to the regression on the map
+Map.centerObject(test_boundary, 11);
+
+// Check model performance
+// Get details of classifier
+var classifier_details = classifier.explain();
+
+// Explain the classifier with importance values
+var variable_importance = ee.Feature(null, ee.Dictionary(classifier_details).get('importance'));
+
+var chart =
+  ui.Chart.feature.byProperty(variable_importance)
+  .setChartType('ColumnChart')
+  .setOptions({
+  title: 'Random Forest Variable Importance',
+  legend: {position: 'none'},
+  hAxis: {title: 'Bands'},
+  vAxis: {title: 'Importance'}
+});
+
+// Plot a chart
+print("Variable importance:", chart);
+
+// Create model assessment statistics
+// Get predicted regression points in same location as training data
+var predictedTraining = regression.sampleRegions({collection:trainingData, geometries: true});
+
+// Separate the observed (agb_GEDI) and predicted (regression) properties
+var sampleTraining = predictedTraining.select(['rh98', 'predicted']);
+
+// Create chart, print it
+var chartTraining = ui.Chart.feature.byFeature(sampleTraining, 'rh98', 'predicted')
+.setChartType('ScatterChart').setOptions({
+title: 'Predicted vs Observed - Training data ',
+hAxis: {'title': 'observed'},
+vAxis: {'title': 'predicted'},
+pointSize: 3,
+trendlines: { 0: {showR2: true, visibleInLegend: true} ,
+1: {showR2: true, visibleInLegend: true}}});
+print(chartTraining);
+
+// Compute Root Mean Squared Error (RMSE)
+// Get array of observation and prediction values 
+var observationTraining = ee.Array(sampleTraining.aggregate_array('rh98'));
+
+var predictionTraining = ee.Array(sampleTraining.aggregate_array('predicted'));
+
+// Compute residuals
+var residualsTraining = observationTraining.subtract(predictionTraining);
+
+// Compute RMSE with equation and print the result
+var rmseTraining = residualsTraining.pow(2).reduce('mean', [0]).sqrt();
+print('Training RMSE', rmseTraining);
+
+/////////////////////////////////////////////////////////////////////////////
+//Perform validation
+// Get predicted regression points in same location as validation data
+var predictedValidation = regression.sampleRegions({collection:validationData, geometries: true});
+
+// Separate the observed (rh98) and predicted (regression) properties
+var sampleValidation = predictedValidation.select(['rh98', 'predicted']);
+
+// Create chart and print it
+var chartValidation = ui.Chart.feature.byFeature(sampleValidation, 'predicted', 'rh98')
+.setChartType('ScatterChart').setOptions({
+title: 'Predicted vs Observed - Validation data',
+hAxis: {'title': 'predicted'},
+vAxis: {'title': 'observed'},
+pointSize: 3,
+trendlines: { 0: {showR2: true, visibleInLegend: true} ,
+1: {showR2: true, visibleInLegend: true}}});
+print(chartValidation);
+
+// Compute RMSE
+// Get array of observation and prediction values 
+var observationValidation = ee.Array(sampleValidation.aggregate_array('rh98'));
+
+var predictionValidation = ee.Array(sampleValidation.aggregate_array('predicted'));
+
+// Compute residuals
+var residualsValidation = observationValidation.subtract(predictionValidation);
+
+var nSteps = 10
+// Creates a color bar thumbnail image for use in legend from the given color palette
+function makeColorBarParams(palette) {
+  return {
+    bbox: [0, 0, nSteps, 0.1],
+    dimensions: '200x10',
+    format: 'png',
+    min: 0,
+    max: nSteps,
+    palette: palette,
+  };
+}
+
+// Create the colour bar for the legend
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0).int(),
+  params: makeColorBarParams(viz_test.palette),
+  style: {stretch: 'vertical', margin: '0px 8px', maxHeight: '24px'},
+});
+
+
+
+// Create a panel with three numbers for the legend
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(Number((viz_test.min).toFixed(2)), {margin: '4px 8px'}),
+    ui.Label(
+        (Number((viz_test.max-viz.min) / 2+viz_test.min).toFixed(2)),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+    ui.Label(Number((viz_test.max).toFixed(2)), {margin: '4px 8px'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+// Legend title
+var legendTitle = ui.Label({
+  value: 'Tree height',
+  style: {fontWeight: 'bold'}
+});
+
+// Add the legendPanel to the map
+var legendPanel = ui.Panel([legendTitle, colorBar, legendLabels]);
+Map.add(legendPanel);
+

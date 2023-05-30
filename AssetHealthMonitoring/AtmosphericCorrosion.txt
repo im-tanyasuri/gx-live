@@ -1,0 +1,293 @@
+
+
+/////////////////////////////////////define the geometry and dates///////////////////////////
+
+var roi = adani_geometry
+ 
+
+
+var start_date = '2023-04-01'
+var end_date = '2023-04-30'
+
+
+
+///////////////////////////////////////SO2///////////////////////////////////
+var s5pDataset = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_SO2')
+  .select('SO2_column_number_density')
+  .filterDate(start_date, end_date)
+  .filterBounds(roi)
+
+var s5pDataset = s5pDataset.median().clip(roi)
+
+
+///////////////////////////////////Temperature///////////////////////
+
+var image = ee.Image(ee.ImageCollection('LANDSAT/LC08/C02/T1_TOA')
+  .filterBounds(roi)    
+  .filterDate(start_date, end_date)    
+  .sort('CLOUD_COVER') 
+  .mosaic());
+
+var nir = image.select('B5');
+var swir = image.select('B6');
+var thermal = image.select('B10').clip(roi);
+var ndmi = nir.subtract(swir).divide(nir.add(swir)).rename('NDMI');
+
+
+var a= ee.Number(0.004);
+var b= ee.Number(0.986);
+var EM=ndmi.multiply(a).add(b).rename('EMM');
+var imageVisParam3 = {min: 0.9865619146722164, max:0.989699971371314};
+
+var temperatureDataset = thermal.expression(
+'(Tb/(1 + (0.00115* (Tb / 1.438))*log(Ep)))-273.15', {
+ 'Tb': thermal.select('B10'),
+'Ep': EM.select('EMM')
+}).rename('temperatureDataset').clip(roi);
+
+var temperatureDataset = temperatureDataset.clip(roi)
+
+
+
+
+///////////////////////RH///////////////////////////////////////////////
+var image = ee.ImageCollection('NASA/GLDAS/V021/NOAH/G025/T3H')
+                            .filterBounds(roi)
+                            .filterDate(start_date, end_date)
+                            .median()
+
+var rhDataset = image.expression(
+  '0.263 * p * q * (exp(17.67 * (T - T0) / (T - 29.65))) ** -1', {
+    T: image.select('Tair_f_inst'),
+    T0: 273.16,
+    p: image.select('Psurf_f_inst'),
+    q: image.select('Qair_f_inst')
+  }
+).float()
+
+var rhDataset = rhDataset.clip(roi)
+var rhDataset_minmax = rhDataset.reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 30,
+                                maxPixels: 10e9
+});
+print(rhDataset_minmax)
+////////////////////////////////////////////////////////////////////////////////////////////
+
+
+///////////////////////Define the emperical equation of Corrosion//////////////////
+
+
+var temperature = temperatureDataset; 
+var fcs = temperature.lte(10) ? temperature.subtract(10).multiply(0.150) : temperature.subtract(10).multiply(-0.054);
+print('fcs:', fcs);
+
+
+function corrosionRate(so2, t, rh) {
+  var fcs = t.lte(10) ? t.subtract(10).multiply(0.150) : t.subtract(10).multiply(-0.054);
+  var rcorr = ee.Image.constant(1.77)
+    .multiply(so2.pow(0.52))
+    .multiply(rh.multiply(0.02).add(fcs).exp())
+    .add(ee.Image.constant(0.102)
+    .multiply(rh.multiply(0.03).add(t.multiply(0.04))).exp());
+  return rcorr;
+}
+
+var corrosionRateValue = corrosionRate(s5pDataset, temperatureDataset, rhDataset);
+
+
+
+/////////////////////////get the min max values and visulaize the output///////////////////////////
+var corrosionRateValue_minmax = corrosionRateValue.reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 500,
+                                maxPixels: 10e9
+});
+print(corrosionRateValue_minmax)
+var max = ee.Number(corrosionRateValue_minmax.get("constant_max"));
+var min = ee.Number(corrosionRateValue_minmax.get("constant_min"));
+
+var viz = {
+  min: 0,
+  max: 12.0,
+  palette : ['green','yellow','red']
+};
+
+var palette = ['green','lightgreen','orange','red']
+Map.addLayer(corrosionRateValue.clip(roi), viz, 'atm_corrosion');
+
+
+///////////////////////////////////export the map////////////////////////////////////
+Export.image.toDrive({
+  image: corrosionRateValue.clip(roi),
+  description: 'adani_Corr_april',
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 20,
+  maxPixels: 1e10
+});
+
+// There are some data gaps in the image, which gives NaN values 
+// It's uncertin if that could be solved in GEE itself
+// download this data and solve it with python
+// just replace the Nan Values with the value '1'
+
+////////////////////////////////////The code in python/////////////////////////////////////
+
+
+// imgs = ['1_corr.tif','2_corr.tif','3_corr.tif']
+// for im in imgs:
+//     file_  = np.array(rasterio.open('./static/'+im).read())
+//     with rasterio.open('./static/'+im, 'r') as src:
+//         # Access the CRS of the raster
+//         crs = src.crs
+//         transform = src.transform
+//     print(crs)   
+//         # Print the CRS inf
+//     for i in range(file_[0].shape[0]):
+//         for j in range(file_[0].shape[1]):
+//             if np.isnan(file_[0][i][j]):
+//                 file_[0][i][j] = 1.0
+
+
+//     with rasterio.open(
+//         './static/'+im.split('.')[0]+'mod.tif',
+//         'w',
+//         driver='GTiff',
+//         height=file_.shape[1],
+//         width=file_.shape[2],
+//         count=1,
+//         transform=transform,
+//         dtype=file_.dtype,
+//         crs=crs,
+
+//     ) as dst:
+//         dst.write(file_)
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////load the modified images////////////////////////////////////
+var image1 = ee.Image("projects/ee-tanyasuri20/assets/2_corrmod");
+var image2 = ee.Image("projects/ee-tanyasuri20/assets/1_corrmod");
+var image3 = ee.Image("projects/ee-tanyasuri20/assets/3_corrmod");
+
+
+///////////////////////////////////get the minmax and visualize them///////////////////////////
+
+
+var image2_minmax = image2.reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 500,
+                                maxPixels: 10e9
+});
+print(image2_minmax)
+
+
+var image_minmax = image1.reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 500,
+                                maxPixels: 10e9
+});
+print(image_minmax)
+
+
+var image3_minmax = image3.reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 500,
+                                maxPixels: 10e9
+});
+print(image3_minmax)
+
+
+
+
+var viz = {
+  min: 0,
+  max: 12.0,//got 12.0 as maximum
+  palette : ['green','yellow','red']
+};
+
+
+Map.addLayer(image2.clip(roi), viz, 'feb');
+Map.addLayer(image1.clip(roi), viz, 'march');
+Map.addLayer(image3.clip(roi), viz, 'april');
+
+
+///////////////////////////////////////export the maps//////////////////////////////////
+Export.image.toDrive({
+  image: image1.visualize(viz).clip(roi),
+  description: '2_corr',
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+Export.image.toDrive({
+  image: image2.visualize(viz).clip(roi),
+  description: '1_corr',
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+Export.image.toDrive({
+  image: image3.visualize(viz).clip(roi),
+  description: '3_corr',
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+
+
+//////////////////////////////////////////The legend//////////////////////////////////////
+var nSteps = 10
+// Creates a color bar thumbnail image for use in legend from the given color palette
+function makeColorBarParams(palette) {
+  return {
+    bbox: [0, 0, nSteps, 0.1],
+    dimensions: '300x10',
+    format: 'png',
+    min: 0,
+    max: nSteps,
+    palette: palette,
+  };
+}
+
+// Create the colour bar for the legend
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0).int(),
+  params: makeColorBarParams(viz.palette),
+  style: {stretch: 'vertical', margin: '0px 8px', maxHeight: '24px'},
+});
+
+
+
+// Create a panel with three numbers for the legend
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(Number((viz.min).toFixed(5)), {margin: '4px 8px'}),
+    ui.Label(
+        (Number((viz.max-viz.min) / 2+viz.min).toFixed(2)),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+    ui.Label(Number((viz.max).toFixed(2)), {margin: '4px 8px'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+// Legend title
+var legendTitle = ui.Label({
+  value: 'Atmospheric Corrosion Rate (micron/year)',
+  style: {fontWeight: 'bold'}
+});
+
+// Add the legendPanel to the map
+var legendPanel = ui.Panel([legendTitle, colorBar, legendLabels]);
+Map.add(legendPanel);
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+

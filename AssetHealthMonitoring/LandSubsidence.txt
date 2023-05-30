@@ -1,0 +1,217 @@
+
+// Project : Land Subsidence with DInSAR from ASF
+//author : Tanya Suri
+// For the mosaic of 3 images - image11, image12, image13
+//get their projections as same
+//Map it and try to visualize if there is any data gaps
+// mosaic them together and clip to the roi
+// get the min max values of each of the mosaicked parts
+//visualize the mosaicked image with min max from all the input images
+
+
+
+//////////////////////////////The projections//////////////////////////////
+var projection = image11.projection().aside(print);
+var projection = image12.projection().aside(print);
+var projection = image13.projection().aside(print);
+//////////////////////////////////////////////////////////////////////////////
+
+
+
+///////////////////////////////images and geometry as layer/////////////////////////
+
+var roi = adani_geometry
+Map.addLayer(roi)
+Map.addLayer(image11)
+Map.addLayer(image12)
+Map.addLayer(image13)
+
+
+
+/////////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////mosaic and clip to geometry and map it//////////////////////
+
+var ls = ee.ImageCollection([image11, image12, image13]).mosaic().clip(roi)
+Map.addLayer(ls)
+
+/////////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////get the min max of the images and mosaicked one///////////
+
+var minMaxValues_mos = image11.clip(roi).reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 10,
+                                tileScale:10,
+                                maxPixels: 10e9
+                                })
+print('image11',minMaxValues_mos);
+
+var minMaxValues_mos = image12.clip(roi).reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 10,
+                                tileScale:10,
+                                maxPixels: 10e9
+                                })
+print('image12',minMaxValues_mos);
+
+var minMaxValues_mos = image13.clip(roi).reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 10,
+                                tileScale:10,
+                                maxPixels: 10e9
+                                })
+print('image13',minMaxValues_mos);
+
+
+var minMaxValues_disp2 = ls.clip(roi).reduceRegion({reducer: ee.Reducer.minMax(),
+                                geometry: roi,
+                                scale : 10,
+                                tileScale:10,
+                                maxPixels: 10e9
+                                })
+print('moasaicked',minMaxValues_disp2);
+
+////////////////////////////////////////plot the TTs/////////////////////////////////
+var table = ee.FeatureCollection(table2);
+
+Map.addLayer(table,  {'color': 'blue'}, 'Table Points');
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////change the visualization//////////////////////////////
+var max = ee.Number(minMaxValues_disp2.get("b1_max"));
+var min = ee.Number(minMaxValues_disp2.get("b1_min"));
+var viz = {
+  min:-0.15,
+  max:0.15,
+  palette :  ['blue','yellow', 'red']
+};
+
+Map.addLayer(ls.clip(roi),viz,'land sub1')
+
+/////////////////////////////////////////////////////////////////////////////////////
+
+
+
+////////////////////////////////////thresholding based on values/////////////////
+var firstmask = ls.updateMask(ls.lte(-0.043))
+Map.addLayer(firstmask.clip(roi),viz,'first')
+
+var secmask = ls.updateMask(ls.lte(0.043).and(ls.gt(-0.004)))
+Map.addLayer(secmask.clip(roi),viz,'sec')
+
+var thirdmask = ls.updateMask(ls.lte(0.004).and(ls.gt(0.051)))
+Map.addLayer(thirdmask.clip(roi),viz,'third')
+
+var fourmask = ls.updateMask(ls.lte(0.051).and(ls.gt(0.097)))
+Map.addLayer(fourmask.clip(roi),viz,'four')
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+////////////////////////////////////export the images///////////////////////////////////
+Export.image.toDrive({
+  image: ls.visualize(viz).clip(geometry2),
+  description: "LandSubsidence_adani",
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+
+Export.image.toDrive({
+  image: firstmask.visualize(viz).clip(roi),
+  description: "LandSubsidence_firstmask_adani",
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+Export.image.toDrive({
+  image: secmask.visualize(viz).clip(roi),
+  description: "LandSubsidence_secmask_adani",
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+Export.image.toDrive({
+  image: thirdmask.visualize(viz).clip(roi),
+  description: "LandSubsidence_thirdmask_adani",
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+Export.image.toDrive({
+  image: fourmask.visualize(viz).clip(roi),
+  description: "LandSubsidence_fourmask_adani",
+  crs : 'EPSG:4326',
+  region: roi,
+  scale: 30,
+  maxPixels: 1e10
+});
+
+
+///////////////////////////////////////////////the legend////////////////////////////////////
+
+
+var nSteps = 12
+// Creates a color bar thumbnail image for use in legend from the given color palette
+function makeColorBarParams(palette) {
+  return {
+    bbox: [0, 0, nSteps, 0.1],
+    dimensions: '400x10',
+    format: 'png',
+    min: 0,
+    max: nSteps,
+    palette: palette,
+  };
+}
+
+// Create the colour bar for the legend
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0).int(),
+  params: makeColorBarParams(viz.palette),
+  style: {stretch: 'vertical', margin: '0px 8px', maxHeight: '24px'},
+});
+
+var mid = (Number((viz.max-viz.min) / 2+viz.min).toFixed(3))
+var mid_num = (viz.max-viz.min) / 2+viz.min
+var mid2 = (viz.max-mid) / 2+mid
+print(mid2)
+// Create a panel with three numbers for the legend
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(Number((viz.min).toFixed(3)), {margin: '4px 8px'}),
+    ui.Label(Number((mid - viz.min)/2+viz.min).toFixed(3),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+    ui.Label(
+        (Number((viz.max-viz.min) / 2+viz.min).toFixed(3)),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+        
+    ui.Label(Number((viz.max - mid_num)/2+mid_num).toFixed(3),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+    ui.Label(Number((viz.max).toFixed(3)), {margin: '4px 8px'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+// Legend title
+var legendTitle = ui.Label({
+  value: 'Land Subisidence Map ( meters)',
+  style: {fontWeight: 'bold'}
+});
+
+// Add the legendPanel to the map
+var legendPanel = ui.Panel([legendTitle, colorBar, legendLabels]);
+Map.add(legendPanel);
+
+
