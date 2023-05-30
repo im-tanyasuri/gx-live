@@ -1,0 +1,216 @@
+
+
+///////////////////////////////////////////Define the geometry and date range///////////////////////////////////
+var roi = geometry2
+
+var start_date = '2023-04-01'
+var end_date = '2023-04-30'
+
+
+//////////////////////////////////////////Define cloud mask for S2 and download the require bands//////////////////////////
+
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  return image.updateMask(mask).divide(10000);
+}
+
+var S2 = ee.ImageCollection('COPERNICUS/S2_SR')
+                  .filterDate(start_date, end_date)
+                  // Pre-filter to get less cloudy granules.
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',5))
+                  .map(maskS2clouds);
+                 
+                  
+// the required bands list
+var bands = ['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B9','B11','B12']
+
+//Download them one by one
+for(var i =0;i<13;i++){
+Export.image.toDrive({
+    image : S2.select(bands[i]).median().clip(roi),
+    description: bands[i],
+    folder: 'GEE_Folder_adani2',
+    scale: 10,
+    crs : 'EPSG:4326',
+    fileFormat: 'GeoTIFF',
+    region: roi
+    });
+    
+}
+///////////////////////////////////////////////////Define the indices and export them as well/////////////////////////
+var addGLI = function(image){
+   
+    var GLI = image.expression ('(((GREEN - RED) + (GREEN - BLUE)) / ((2 * GREEN) + RED + BLUE))', {
+        'GREEN': image.select ('B3'),  
+        'RED': image.select ('B4'),
+        'BLUE': image.select ('B2')
+        }).rename("GLI")
+    image = image.addBands(GLI)
+
+    return(image)};
+    
+var gli = S2.map(addGLI);
+
+    
+    
+    
+var getGCI= function(image){
+
+ 
+    var GCI = image.expression ('(((NIR) / (GREEN)) - 1)', {
+        'NIR': image.select ('B8'),  
+        'GREEN': image.select ('B3')
+        }).rename("GCI")
+    
+    image = image.addBands(GCI)
+
+    return(image)
+};
+var gci = S2.map(getGCI);
+
+
+    
+var getNDVI= function(image){
+
+ 
+    var NDVI = image.expression ('((NIR - RED) / (NIR + RED))', {
+        'NIR': image.select ('B8'),  
+        'RED': image.select ('B4')
+        }).rename("NDVI")
+    
+    image = image.addBands(NDVI)
+
+    return(image)
+};
+var ndvi = S2.map(getNDVI);
+
+
+////////////////////////////////////////////////The LULC map of dynamic world for labels////////////////////////////
+
+var dwVisParams = {
+  min: 0,
+  max: 8,
+  palette: ['#419BDF', '#397D49', '#88B053', '#7A87C6',
+    '#E49635', '#DFC35A', '#C4281B', '#A59B8F', '#B39FE1']
+};
+
+var dw_coll = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1')
+     .filterDate(start_date, end_date)
+     .filterBounds(roi)
+     .median();
+print(dw_coll)
+     
+
+    
+Map.addLayer(dw_coll.select('label').clip(roi),dwVisParams,'lulc')
+
+
+/////////////////////////////////////////////////Load SRTM/////////////////////////////////////////////////
+var SRTM = ee.Image("USGS/SRTMGL1_003");
+// Clip Elevation
+var elevation = SRTM.clip(roi);
+
+// Reproject 'elevation' to WGS 84 UTM zone 35s                
+var elevation = elevation.reproject({crs: 'EPSG:4326',scale: 30}); 
+  
+// Check projection information
+print('Projection, crs, and crs_transform:', elevation.projection()); 
+
+// Derive slope from the SRTM
+var slope = ee.Terrain.slope(SRTM).clip(roi);
+
+// Reproject 'slope' to WGS 84 UTM zone 35s                
+var slope = slope.reproject({crs: 'EPSG:4326',scale: 30}); 
+  
+// Check projection information
+print('Projection, crs, and crs_transform:', slope.projection()); 
+
+/////////////////////////////////Load ESA World Cover data///////////////////////////////////////////
+// 
+var dataset = ee.ImageCollection("ESA/WorldCover/v100").first();
+
+// Clip the land cover to the boundary
+var ESA_LC_2020 = dataset.clip(roi);
+
+// Extract forest areas from the land cover
+var forest_mask = ESA_LC_2020.updateMask(
+  ESA_LC_2020.eq(10) // Only keep pixels where class equals 2
+);
+
+// Display forests only
+var visualization = {bands: ['Map'],};
+
+Map.addLayer(forest_mask, visualization, "Trees");
+
+Export.image.toDrive({
+    image :gli.select("GLI").median().clip(roi),
+    description: 'gli',
+    scale: 10,
+    folder: 'GEE_Folder_4',
+    crs : 'EPSG:4326',
+    fileFormat: 'GeoTIFF',
+    region: roi
+    });
+
+Export.image.toDrive({
+    image :gci.select("GCI").median().clip(roi),
+    description: 'gci',
+    scale: 10,
+    folder: 'GEE_Folder_4',
+    crs : 'EPSG:4326',
+    fileFormat: 'GeoTIFF',
+    region: roi
+    });
+
+Export.image.toDrive({
+    image :ndvi.select("NDVI").median().clip(roi),
+    description: 'ndvi',
+    scale: 10,
+    folder: 'GEE_Folder_4',
+    crs : 'EPSG:4326',
+    fileFormat: 'GeoTIFF',
+    region: roi
+    });
+
+
+    
+Export.image.toDrive({
+    image :forest_mask.clip(roi),
+    description: 'forestCover',
+    scale: 10,
+    folder: 'GEE_Folder_4',
+    crs : 'EPSG:4326',
+    fileFormat: 'GeoTIFF',
+    region: roi
+    });
+
+Export.image.toDrive({
+    image :elevation.clip(roi),
+    description: 'elevation',
+    scale: 10,
+    folder: 'GEE_Folder_4',
+    crs : 'EPSG:4326',
+    fileFormat: 'GeoTIFF',
+    region: roi
+    });
+
+Export.image.toDrive({
+    image :slope.clip(roi),
+    description: 'slope',
+    scale: 10,
+    folder: 'GEE_Folder_4',
+    crs : 'EPSG:4326',
+    fileFormat: 'GeoTIFF',
+    region: roi
+    });
+    
+    
