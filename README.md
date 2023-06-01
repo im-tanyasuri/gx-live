@@ -14,7 +14,7 @@
 
 
 ```
-> The latitude and longitude here is the central coordinate for which we are provided with the relative height metrics.
-> We have to geo reference the rh values with sentinel -2 bands
-> Get the mean value for the 25m diameter radius and form a table with all the band mean and rh ground truth values
+The latitude and longitude here is the central coordinate for which we are provided with the relative height metrics.
+We have to geo reference the rh values with sentinel -2 bands
+Get the mean value for the 25m diameter radius and form a table with all the band mean and rh ground truth values
 ```
