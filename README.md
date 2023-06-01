@@ -24,6 +24,7 @@ Get the mean value for the 25m diameter radius and form a table with all the ban
 
 
 ### Heatmap showing various Tree canopy heights
-The background color is `#0969DA`
+- ![#f03c15](https://placehold.co/15x15/f03c15/f03c15.png) `>=8.6`
+
 
 ![tch_adani](https://github.com/im-tanyasuri/gx-live/assets/109717636/0a92c59e-2df2-4118-a75e-1ba7c586792a)
