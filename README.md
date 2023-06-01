@@ -18,3 +18,7 @@ The latitude and longitude here is the central coordinate for which we are provi
 We have to geo reference the rh values with sentinel -2 bands
 Get the mean value for the 25m diameter radius and form a table with all the band mean and rh ground truth values
 ```
+
+
+### Heatmap showing various Tree canopy heights
+![tch_adani](https://github.com/im-tanyasuri/gx-live/assets/109717636/0a92c59e-2df2-4118-a75e-1ba7c586792a)
