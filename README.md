@@ -13,6 +13,8 @@
 >  "rx_assess_quality_flag", "selected_algorithm", "sensitivity", "solar_elevation", "surface_flag"
 
 
+
+
 ```
 The latitude and longitude here is the central coordinate for which we are provided with the relative height metrics.
 We have to geo reference the rh values with sentinel -2 bands
@@ -20,5 +22,8 @@ Get the mean value for the 25m diameter radius and form a table with all the ban
 ```
 
 
+
 ### Heatmap showing various Tree canopy heights
+The background color is `#ffffff`
+
 ![tch_adani](https://github.com/im-tanyasuri/gx-live/assets/109717636/0a92c59e-2df2-4118-a75e-1ba7c586792a)
