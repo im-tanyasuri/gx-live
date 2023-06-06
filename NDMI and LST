@@ -1,0 +1,87 @@
+var roi = ee.Geometry.Polygon(
+        [[72.75006444954514, 22.78874298462253],
+          [72.75006444954514, 22.495624127393626],
+          [74.95115298423937, 22.495624127393626],
+          [74.95115298423937, 22.78874298462253],
+          [72.75006444954514, 22.78874298462253]]);
+
+//Map.addLayer(tower)
+ 
+// Import the Landsat 8 TOA image collection.
+var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_TOA');
+
+// Get the least cloudy image in 2015.
+var image = ee.Image(
+  l8.filterBounds(roi)
+    .filterDate('2023-04-30', '2023-05-10')
+    .sort('CLOUD_COVER').median().clip(roi)
+);
+
+print(image)
+
+var thermal = image.select('B10');
+
+var thermalVis = {min: 299.6445617675781, max: 321.7424621582031, palette:[
+    '040274', '040281', '0502a3', '0502b8', '0502ce', '0502e6',
+    '0602ff', '235cb1', '307ef3', '269db1', '30c8e2', '32d3ef',
+    '3be285', '3ff38f', '86e26f', '3ae237', 'b5e22e', 'd6e21f',
+    'fff705', 'ffd611', 'ffb613', 'ff8b13', 'ff6e08', 'ff500d',
+    'ff0000', 'de0101', 'c21301', 'a71001', '911003'
+]};
+  
+
+
+
+
+var addNDMI = function(image) {
+  var ndmi = image.normalizedDifference(['B5', 'B6']).rename('NDMI');
+  return image.addBands(ndmi);
+};
+
+var ndmiParams = {min: -0.69, max: 0.79, palette: ['red', 'yellow', 'blue']};
+
+var ndmi = addNDMI(image).select('NDMI').clip(roi);
+var withNDMI = l8.map(addNDMI);
+var img1 = withNDMI.select('NDMI').median().clip(roi);
+Map.addLayer(img1, ndmiParams)
+
+var a= ee.Number(0.004);
+var b= ee.Number(0.986);
+var EM=ndmi.multiply(a).add(b).rename('EMM');
+
+var LST = thermal.expression(
+'(Tb/(1 + (0.00115* (Tb / 1.438))*log(Ep)))-273.15', {
+ 'Tb': thermal.select('B10'),
+'Ep': EM.select('EMM')
+}).rename('LST').clip(roi);
+
+var hotspots_2023= LST
+  .where(LST.lte(33), 0)
+  .where(LST.gt(33).and(LST.lte(40)), 1)
+  .where(LST.gt(40), 2);
+  // .where(regression.gt(8), 3);
+var LST_corr = hotspots_2023.clip(roi)
+
+var minMaxValues_LST = LST_corr.reduceRegion({reducer: ee.Reducer.minMax(),
+                                 geometry: roi,
+                                 scale : 10,
+                                 maxPixels: 10e9
+});
+print(minMaxValues_LST)
+
+
+var hotspot_viz = {min: 0 , max:2, palette: ['blue','yellow','red']}
+Map.addLayer(LST_corr.clip(roi),hotspot_viz, 'Hotspots');
+// var palettes = require('users/gena/packages:palettes');
+
+Map.setCenter(74.95115298423937, 22.78874298462253, 8);
+
+Map.addLayer(thermal, thermalVis)
+
+
+Export.image.toDrive({
+  image: hotspots_2023.clip(roi).visualize(hotspot_viz),
+  description: 'HOTSPOT',
+  region: roi,
+  scale: 30,
+  maxPixels: 3e10});
